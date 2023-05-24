@@ -11,20 +11,16 @@ import gzip
 
 # Metto in coda tutte le TCP connections con destinazione la porta 80
 # L'idea è quella di avere le seguenti regole nella chain DOCKER-USER di iptables:
-#    1) Se il pacchetto è marcato con 1 allora è stato già controllato dallo script e quindi può essere può essere mandato alla nuova chain
-#    2) Altrimenti, se il pacchetto ha porta destinazione 80 viene messo in una coda per essere ispezionato dallo script
-#    3) Altrimenti, viene fatto il RETURN alla chain precedente (unica regola già presente in DOCKER-USER)
-# Abbiamo che le regole sono state messe in ordine opposto perchè vengono inserite con l'opzione -I la quale mette le regole in cima
-# alla chain
+#    1) Se il pacchetto ha porta destinazione 80 e non è marcato con 1 viene messo in una coda per essere ispezionato dallo script
+#    2) Altrimenti, viene fatto il RETURN alla chain precedente (unica regola già presente in DOCKER-USER)
+# La regola viene messa in cima all'interno della chain
 
-os.system("/usr/sbin/iptables -I DOCKER-USER -p tcp --dport 80 -j NFQUEUE --queue-num 1")
-#os.system("/usr/sbin/iptables -I DOCKER-USER -m mark --mark 1 -j ACCEPT")
-os.system("/usr/sbin/iptables -I DOCKER-USER -m mark --mark 1 -j DOCKER-ISOLATION-STAGE-1")
+os.system("/usr/sbin/iptables -I DOCKER-USER -p tcp --dport 80 -m mark ! --mark 1 -j NFQUEUE --queue-num 1")
 
 # Questa funzione verifica se il pacchetto è TCP e che trasporti dei dati, in questo caso si assicura che sia 
 # un pacchetto destinato alla porta 80. In tal caso si procede a verificare che negli header del pacchetto,
 # presunto HTTP, ci sia nello User-Agent la stringa 'python-request'. Se questi check vengono superati allora è
-# un presunto attacco e quindi il pacchetto viene droppato. In tutti gli altri casi, il pacchetto viene markato
+# un presunto attacco e quindi il pacchetto viene droppato. In tutti gli altri casi, il pacchetto viene marcato
 # con 1 per poi essere rimesso all'inizio della chain, lo scopo è poi far continuare la valutazione delle regole
 # di iptables così da lasciare la decisione al firewall del sistema operativo.
 def ispeziona_traffico(packet):
@@ -53,15 +49,18 @@ def ispeziona_traffico(packet):
                     packet.drop()
                     print("Pacchetto droppato")
                else:
+                    # Marca il pacchetto con 1 richiede l'esecuizione delle regole nella chain
                     packet.set_mark(1)
                     packet.repeat()
                     #http_packet.show()
                     print("pacchetto accettato"+user_agent)
           else:
+               # Marca il pacchetto con 1 richiede l'esecuizione delle regole nella chain
                packet.set_mark(1)
                packet.repeat()
                          
      else:
+          # Marca il pacchetto con 1 richiede l'esecuizione delle regole nella chain
           #packet.accept()
           packet.set_mark(1)
           packet.repeat()
@@ -75,9 +74,4 @@ nfqueue.bind(1, ispeziona_traffico)
 try:
      nfqueue.run()
 except KeyboardInterrupt:
-     os.system("/usr/sbin/iptables -D DOCKER-USER -p tcp --dport 80 -j NFQUEUE --queue-num 1")
-     #os.system("/usr/sbin/iptables -D DOCKER-USER -m mark --mark 1 -j ACCEPT")
-     os.system("/usr/sbin/iptables -D DOCKER-USER -m mark --mark 1 -j DOCKER-ISOLATION-STAGE-1")
-
-
-
+     os.system("/usr/sbin/iptables -D DOCKER-USER -p tcp --dport 80 -m mark ! --mark 1 -j NFQUEUE --queue-num 1")
